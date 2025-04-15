@@ -21,10 +21,30 @@ async function getCurrencyExchange() {
     throw new Error("Failed to fetch currency exchange data.");
   }
 
-  // const { timestamp, base, date, rates } = data;
   const { timestamp, source, quotes } = data;
+  const usdidr = quotes.USDIDR;
+  const short = usdidr;
 
-  const result = new CurrencyExchange({ timestamp, source, quotes });
+  const previousExchanges = await CurrencyExchange.find({
+    short: { $exists: true, $ne: null }
+  }).sort({ timestamp: -1 }).limit(4);
+
+  // Filter hanya short yang berupa number valid
+  const validShorts = previousExchanges
+    .map(item => item.short)
+    .filter(val => typeof val === 'number' && !isNaN(val));
+
+  let long;
+
+  if (validShorts.length > 0) {
+    const sumShort = validShorts.reduce((acc, val) => acc + val, 0);
+    long = (sumShort + short) / (validShorts.length + 1);
+  } else {
+    long = short;
+  }
+
+
+  const result = new CurrencyExchange({ timestamp, source, quotes, short, long });
   return await result.save();
 }
 
