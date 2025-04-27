@@ -10,6 +10,7 @@ const basicAuth = require('../middleware/basic_auth_helper');
 
 router.post("/v1/register", basicAuth.isAuthenticated, authController.register);
 router.get("/v1/currency-exchange", basicAuth.isAuthenticated, currencyController.get);
+router.post("/v1/currency-exchange/force-update", basicAuth.isAuthenticated, currencyController.forceUpdate);
 router.get("/v1/inflation-country", basicAuth.isAuthenticated, inflationController.get);
 router.get("/v1/index-saham", basicAuth.isAuthenticated, indexSahamController.get);
 router.get("/v1/obligasi", basicAuth.isAuthenticated, obligasiController.get);

@@ -1,6 +1,7 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
+const cors = require("cors");
 const authRoutes = require("./bin/routes/authRoutes");
 const global_config = require("./bin/helper/global_config");
 const logger = require('./bin/helper/logger');
@@ -11,6 +12,8 @@ const app = express();
 const port = global_config.get("/port");
 const mongoUri = global_config.get("/mongo");
 
+// Enable CORS for all routes
+app.use(cors());
 app.use(express.json());
 
 app.use("/api", authRoutes);

@@ -4,13 +4,7 @@ const CurrencyExchange = require("../models/CurrencyExchange");
 const Obligasi = require("../models/Obligasi");
 const IndexSaham = require("../models/IndexSaham");
 const logger = require('../../bin/helper/logger');
-
-const WEIGHTS = {
-  INFLATION: 0.25,
-  CURRENCY: 0.25,
-  OBLIGASI: 0.25,
-  SAHAM: 0.25
-};
+const currencyExchangeService = require('../services/currencyExchangeService');
 
 // Normalization ranges
 const RANGES = {
@@ -72,13 +66,73 @@ function analyzeTrend(current, previous) {
   return percentChange > 0 ? 'IMPROVING' : 'DECLINING';
 }
 
+// Fungsi untuk menghitung standar deviasi
+function stdDev(arr) {
+  const n = arr.length;
+  if (n === 0) return 1;
+  const mean = arr.reduce((a, b) => a + b, 0) / n;
+  const variance = arr.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / n;
+  return Math.sqrt(variance);
+}
+
+// Fungsi untuk ambil history nilai indikator (dummy: 3 data terakhir)
+async function getHistory(model, field, sortField) {
+  const docs = await model.find({ [field]: { $exists: true } }).sort({ [sortField]: -1 }).limit(3);
+  return docs.map(d => parseFloat(d[field])).filter(v => !isNaN(v));
+}
+
+// Fungsi smoothing moving average
+function movingAverage(arr) {
+  if (!arr.length) return 1;
+  return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
+// Fungsi bobot dinamis kombinasi
+async function getDynamicWeights() {
+  // Ambil history short-term untuk setiap indikator
+  const inflasiHist = await getHistory(Inflation, 'short', 'period');
+  const kursHist = await getHistory(CurrencyExchange, 'short', 'timestamp');
+  const obligasiHist = await getHistory(Obligasi, 'future_simulation.short.pnl_pct', 'tanggal');
+  const sahamHist = await getHistory(IndexSaham, 'future_info.pnl', 'tanggal');
+
+  // Hitung volatilitas (stdDev)
+  const volatility = {
+    INFLATION: stdDev(inflasiHist),
+    CURRENCY: stdDev(kursHist),
+    OBLIGASI: stdDev(obligasiHist),
+    SAHAM: stdDev(sahamHist)
+  };
+
+  // Bobot dasar (rata)
+  let base = { INFLATION: 0.25, CURRENCY: 0.25, OBLIGASI: 0.25, SAHAM: 0.25 };
+  // Koreksi dengan volatilitas (semakin stabil, bobot makin besar)
+  let raw = {};
+  let total = 0;
+  for (let key in base) {
+    raw[key] = base[key] * (1 / (volatility[key] || 1));
+    total += raw[key];
+  }
+  // Smoothing (moving average volatilitas)
+  for (let key in raw) {
+    raw[key] = movingAverage([raw[key]]); // bisa dikembangkan jika simpan history bobot
+  }
+  // Normalisasi
+  let weights = {};
+  for (let key in raw) {
+    weights[key] = raw[key] / total;
+  }
+  return weights;
+}
+
 async function calculateFinalScore() {
   const ctx = 'final-score-service';
   try {
-    // Get latest data from each indicator
-    const [latestInflation, latestCurrency, latestObligasi, latestSaham] = await Promise.all([
+    // Force update currency data sebelum perhitungan
+    const latestCurrency = await currencyExchangeService.getCurrencyExchange(true);
+    
+    // Get other indicators
+    const [latestInflation, latestObligasi, latestSaham] = await Promise.all([
       Inflation.findOne().sort({ period: -1 }),
-      CurrencyExchange.findOne().sort({ timestamp: -1 }),
       Obligasi.findOne().sort({ tanggal: -1 }),
       IndexSaham.findOne().sort({ tanggal: -1 })
     ]);
@@ -87,12 +141,15 @@ async function calculateFinalScore() {
       throw new Error('Missing data for one or more indicators');
     }
 
-    // Calculate scores for each indicator
+    // Ambil bobot dinamis
+    const dynamicWeights = await getDynamicWeights();
+
+    // Calculate scores for each indicator (inject bobot dinamis)
     const indicators = [
-      calculateInflationScore(latestInflation),
-      calculateCurrencyScore(latestCurrency),
-      calculateObligasiScore(latestObligasi),
-      calculateSahamScore(latestSaham)
+      { ...calculateInflationScore(latestInflation), weight: dynamicWeights.INFLATION, is_dummy: !!latestInflation.is_dummy },
+      { ...calculateCurrencyScore(latestCurrency), weight: dynamicWeights.CURRENCY, is_dummy: !!latestCurrency.is_dummy },
+      { ...calculateObligasiScore(latestObligasi), weight: dynamicWeights.OBLIGASI, is_dummy: !!latestObligasi.is_dummy },
+      { ...calculateSahamScore(latestSaham), weight: dynamicWeights.SAHAM, is_dummy: !!latestSaham.is_dummy }
     ];
 
     // Validate indicators
@@ -114,7 +171,8 @@ async function calculateFinalScore() {
       return {
         ...indicator,
         short_term_weighted: shortTermWeighted,
-        long_term_weighted: longTermWeighted
+        long_term_weighted: longTermWeighted,
+        is_dummy: indicator.is_dummy
       };
     });
 
@@ -174,7 +232,7 @@ function calculateInflationScore(inflation) {
     name: 'INFLATION',
     short_term: normalizedShort,
     long_term: normalizedLong,
-    weight: WEIGHTS.INFLATION,
+    weight: 0.25,
     metadata: {
       raw_short: short,
       raw_long: long,
@@ -209,7 +267,7 @@ function calculateCurrencyScore(currency) {
     name: 'CURRENCY',
     short_term: normalizedValue,
     long_term: normalizedValue,
-    weight: WEIGHTS.CURRENCY,
+    weight: 0.25,
     metadata: {
       current_rate: currentRate,
       previous_rate: previousRate,
@@ -235,7 +293,7 @@ function calculateObligasiScore(obligasi) {
     name: 'OBLIGASI',
     short_term: normalizedShort,
     long_term: normalizedLong,
-    weight: WEIGHTS.OBLIGASI,
+    weight: 0.25,
     metadata: {
       raw_short: short_term,
       raw_long: long_term,
@@ -260,7 +318,7 @@ function calculateSahamScore(saham) {
     name: 'SAHAM',
     short_term: normalizedValue,
     long_term: normalizedValue,
-    weight: WEIGHTS.SAHAM,
+    weight: 0.25,
     metadata: {
       raw_pnl: pnl,
       raw_margin: margin,
