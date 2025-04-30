@@ -8,12 +8,12 @@ const obligasiController = require("../../module/controllers/obligasiController"
 const finalScoreController = require("../../module/controllers/finalScoreController");
 const basicAuth = require('../middleware/basic_auth_helper');
 
-router.post("/v1/register", basicAuth.isAuthenticated, authController.register);
-router.get("/v1/currency-exchange", basicAuth.isAuthenticated, currencyController.get);
-router.get("/v1/inflation-country", basicAuth.isAuthenticated, inflationController.get);
-router.get("/v1/index-saham", basicAuth.isAuthenticated, indexSahamController.get);
-router.get("/v1/obligasi", basicAuth.isAuthenticated, obligasiController.get);
-router.post("/v1/final-score/calculate", basicAuth.isAuthenticated, finalScoreController.calculate);
-router.get("/v1/final-score/latest", basicAuth.isAuthenticated, finalScoreController.getLatest);
+router.post("/v1/register", authController.register);
+router.get("/v1/currency-exchange", currencyController.get);
+router.get("/v1/inflation-country", inflationController.get);
+router.get("/v1/index-saham", indexSahamController.get);
+router.get("/v1/obligasi", obligasiController.get);
+router.post("/v1/final-score/calculate", finalScoreController.calculate);
+router.get("/v1/final-score/latest", finalScoreController.getLatest);
 
 module.exports = router;
